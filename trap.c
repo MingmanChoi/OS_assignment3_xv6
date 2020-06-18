@@ -8,6 +8,9 @@
 #include "traps.h"
 #include "spinlock.h"
 
+/* mappages declaration */
+extern int mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm);
+
 // Interrupt descriptor table (shared by all CPUs).
 struct gatedesc idt[256];
 extern uint vectors[];  // in vectors.S: array of 256 entry pointers
@@ -77,7 +80,35 @@ trap(struct trapframe *tf)
             cpuid(), tf->cs, tf->eip);
     lapiceoi();
     break;
-
+/* page fault handler */
+  case T_PGFLT:
+  {
+    char *mem;
+    uint a;
+    a = PGROUNDDOWN(rcr2());
+    // 사용하지 않는 메모리 할당
+    mem = kalloc();
+    // 메모리할당 실패시
+    if(mem == 0){
+      cprintf("allocuvm out of memory\n");
+      cprintf("pid %d %s: trap %d err %d on cpu %d "
+            "eip 0x%x addr 0x%x--kill proc\n",
+            myproc()->pid, myproc()->name, tf->trapno,
+            tf->err, cpuid(), tf->eip, rcr2());
+   	  myproc()->killed = 1;
+	    break;
+    }
+    // 페이지 맵핑
+    if(mappages(myproc()->pgdir,(void *)a, PGSIZE, V2P(mem), PTE_W|PTE_U) < 0) {
+      kfree(mem);
+      cprintf("pid %d %s: trap %d err %d on cpu %d "
+            "eip 0x%x addr 0x%x--kill proc\n",
+            myproc()->pid, myproc()->name, tf->trapno,
+            tf->err, cpuid(), tf->eip, rcr2());
+      myproc()->killed = 1;
+	}
+    break;
+  }
   //PAGEBREAK: 13
   default:
     if(myproc() == 0 || (tf->cs&3) == 0){
@@ -110,3 +141,4 @@ trap(struct trapframe *tf)
   if(myproc() && myproc()->killed && (tf->cs&3) == DPL_USER)
     exit();
 }
+
